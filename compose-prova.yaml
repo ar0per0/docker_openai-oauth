@@ -1,0 +1,22 @@
+services:
+  openai-oauth:
+    build: .
+    image: ar0per0/openai-oauth:latest
+    init: true
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      # Cambiar a "browser" para iniciar sesión mediante el navegador.
+      LOGIN_MODE: browser
+      PORT: 10531
+      TZ: Europe/Madrid
+      # Opcionales. MODEL_TEST solo se usa para la prueba cron.
+      MODEL_TEST: "gpt-5.4-mini"
+      # Varios horarios se separan con: 5 4 * * * | 2 4 * * *
+      CRON_TEST: "48 12 * * *"
+      HEALTHCHECK_TIMEOUT_MS: 30000
+    volumes:
+      - openai-oauth-data:/data/codex
+
+volumes:
+  openai-oauth-data:
