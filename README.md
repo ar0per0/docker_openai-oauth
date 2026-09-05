@@ -20,6 +20,7 @@ services:
     environment:
       # Cambiar a "browser" para iniciar sesión mediante el navegador.
       LOGIN_MODE: device
+      HOST: "0.0.0.0"
       PORT: 10531
       TZ: Europe/Madrid
       # Opcionales. MODEL_TEST solo se usa para la prueba cron.
