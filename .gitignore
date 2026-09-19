@@ -1,0 +1,6 @@
+.env
+.env.*
+auth.json
+data/
+node_modules/
+npm-debug.log*

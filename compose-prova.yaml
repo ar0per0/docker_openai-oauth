@@ -11,7 +11,7 @@ services:
       PORT: 10531
       TZ: Europe/Madrid
       # Opcionales. MODEL_TEST solo se usa para la prueba cron.
-      MODEL_TEST: "gpt-5.4-mini"
+      MODEL_TEST: "gpt-5.6-luna"
       # Varios horarios se separan con: 5 4 * * * | 2 4 * * *
       CRON_TEST: "48 12 * * *"
       HEALTHCHECK_TIMEOUT_MS: 30000

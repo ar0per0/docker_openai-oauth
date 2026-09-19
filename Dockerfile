@@ -30,6 +30,7 @@ ENV CODEX_HOME=/data/codex \
     MODEL_TEST= \
     CRON_TEST= \
     HEALTHCHECK_TIMEOUT_MS=30000 \
+    TZ=Etc/UTC \
     HOST=127.0.0.1 \
     PORT=10531
 

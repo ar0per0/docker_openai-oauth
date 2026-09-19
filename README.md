@@ -1,53 +1,14 @@
 # openai-oauth en Docker
 
-Imagen para ejecutar https://github.com/EvanZhouDev/openai-oauth
+Imagen para ejecutar [`openai-oauth`](https://github.com/EvanZhouDev/openai-oauth)
 con login mediante device-auth o navegador.
 
-La imagen incluye Node.js 22, `@openai/codex`, `openai-oauth`, `curl` y los
+La imagen incluye Node.js 22, la versión más reciente de `@openai/codex`
+disponible durante la construcción, `openai-oauth` 2.0.0, `curl` y los
 certificados CA. `curl` es necesario para que `codex login --device-auth`
 pueda completar el flujo de código de dispositivo dentro del contenedor.
 
-## Inicio rápido
-
-docker-compose.yaml
-```yaml
-services:
-  openai-oauth:
-    image: ar0per0/openai-oauth:latest
-    init: true
-    restart: unless-stopped
-    network_mode: host
-    environment:
-      # Cambiar a "browser" para iniciar sesión mediante el navegador.
-      LOGIN_MODE: device
-      HOST: "0.0.0.0"
-      PORT: 10531
-      TZ: Europe/Madrid
-      # Opcionales. MODEL_TEST solo se usa para la prueba cron.
-      MODEL_TEST: "gpt-5.4-mini"
-      # Varios horarios se separan con: "5 4 * * * | 2 4 * * *"
-      CRON_TEST: ""
-      # Tiempo máximo de cada petición de la prueba cron.
-      HEALTHCHECK_TIMEOUT_MS: 30000
-    volumes:
-      - openai-oauth-data:/data/codex
-
-volumes:
-  openai-oauth-data:
-```
-docker compose up -d `crear + iniciar docker`
-
-docker compose -f openai-oauth `ver logs`
-
-Captura modo device:
-![Captura](./docker-openai-oauth.png)
-
-Captura modo browser:
-![Captura](./docker-openai-oauth_browser.png)
-
----
-
-## Detalle
+## Preparación
 
 ```bash
 docker compose build --no-cache
@@ -86,14 +47,14 @@ uno en uno, porque el callback OAuth siempre utiliza el puerto `1455`.
 
 ## Modelo y comprobación programada
 
-Estas dos opciones son opcionales y se configuran dentro de `compose.yaml`:
+Estas opciones son opcionales y se configuran dentro de `compose.yaml`:
 
 ```yaml
 environment:
   LOGIN_MODE: device
   PORT: 10531
   TZ: Europe/Madrid
-  MODEL_TEST: gpt-5.4-mini
+  MODEL_TEST: gpt-5.6-luna
   CRON_TEST: "5 4 * * * | 2 4 * * * | 3 4 * * *"
   HEALTHCHECK_TIMEOUT_MS: 30000
 ```
@@ -105,7 +66,17 @@ ejemplo ejecuta la prueba diariamente a las 04:05, 04:02 y 04:03. El resultado
 aparece en `docker compose logs`. Si se configura el cron dejando
 `MODEL_TEST` vacío, la prueba utiliza el primer modelo devuelto por
 `/v1/models`. Para desactivarla, deja `CRON_TEST: ""`.
+La prueba pide al modelo que verifique una operación sencilla y solo se
+considera correcta si devuelve exactamente `OK`; una respuesta distinta o
+vacía se registra como `ERROR`.
 La expresión se interpreta usando la zona horaria indicada en `TZ`.
+`TZ` debe ser una zona IANA instalada, como `Europe/Madrid`. Las expresiones
+cron se validan antes de iniciar el servicio, incluidos los rangos permitidos
+para minuto, hora, día, mes y día de la semana.
+La marca horaria escrita por la prueba también utiliza esa zona, por ejemplo
+`2026-09-18 16:04:03`. Ten en cuenta que
+`docker logs --timestamps` añade por separado una marca de Docker terminada en
+`Z`; esa marca externa siempre está expresada en UTC.
 Cada petición se cancela después de `HEALTHCHECK_TIMEOUT_MS` milisegundos para
 evitar procesos cron bloqueados. Además, Docker comprueba `/health` cada 30
 segundos sin consumir una petición de modelo; su estado puede consultarse con
