@@ -8,7 +8,47 @@ disponible durante la construcción, `openai-oauth` 2.0.0, `curl` y los
 certificados CA. `curl` es necesario para que `codex login --device-auth`
 pueda completar el flujo de código de dispositivo dentro del contenedor.
 
-## Preparación
+## Inicio rápido
+
+docker-compose.yaml
+```yaml
+services:
+  openai-oauth:
+    image: ar0per0/openai-oauth:latest
+    init: true
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      # Cambiar a "browser" para iniciar sesión mediante el navegador.
+      LOGIN_MODE: device
+      HOST: "0.0.0.0"
+      PORT: 10531
+      TZ: Europe/Madrid
+      # Opcionales. MODEL_TEST solo se usa para la prueba cron.
+      MODEL_TEST: "gpt-5.6-luna"
+      # Varios horarios se separan con: "5 4 * * * | 2 4 * * *"
+      CRON_TEST: ""
+      # Tiempo máximo de cada petición de la prueba cron.
+      HEALTHCHECK_TIMEOUT_MS: 30000
+    volumes:
+      - openai-oauth-data:/data/codex
+
+volumes:
+  openai-oauth-data:
+```
+docker compose up -d `crear + iniciar docker`
+
+docker compose -f openai-oauth `ver logs`
+
+Captura modo device:
+![Captura](./docker-openai-oauth.png)
+
+Captura modo browser:
+![Captura](./docker-openai-oauth_browser.png)
+
+---
+
+## Detalle
 
 ```bash
 docker compose build --no-cache
