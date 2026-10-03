@@ -22,6 +22,8 @@ RUN apt-get update \
 
 COPY entrypoint.sh /usr/local/bin/openai-oauth-entrypoint
 COPY healthcheck.mjs /usr/local/lib/openai-oauth-healthcheck.mjs
+COPY patch-openai-oauth.mjs /usr/local/lib/patch-openai-oauth.mjs
+RUN node /usr/local/lib/patch-openai-oauth.mjs /usr/local/lib/node_modules/openai-oauth
 RUN chmod 0755 /usr/local/bin/openai-oauth-entrypoint
 
 ENV CODEX_HOME=/data/codex \

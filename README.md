@@ -48,6 +48,7 @@ Captura modo browser:
 
 ## Detalle
 
+
 ```bash
 docker compose build --no-cache
 ```
@@ -55,6 +56,17 @@ docker compose build --no-cache
 Durante la construcción se comprueba que `curl`, `codex` y `openai-oauth`
 estén instalados y sean ejecutables. El contexto Docker excluye archivos de
 credenciales, `.env`, datos locales y dependencias de Node.
+
+La imagen aplica además un parche de compatibilidad a `openai-oauth` 2.0.0
+para aceptar imágenes OpenAI embebidas como
+`data:image/...;base64,...` dentro de `messages[].content[].image_url`. Esa
+versión convierte todas las imágenes en objetos `URL`, lo que hace que AI SDK
+intente descargar también las URL `data:` y las rechace por no usar HTTP(S).
+El parche entrega el contenido base64 y su tipo MIME directamente a AI SDK;
+las imágenes con URL `http://` o `https://` conservan el comportamiento
+original. La construcción falla explícitamente si el código de una futura
+versión deja de coincidir con el parche, en vez de producir silenciosamente
+una imagen sin soporte multimodal.
 
 En `compose.yaml`, selecciona el método de autenticación:
 
