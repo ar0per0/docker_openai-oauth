@@ -6,16 +6,14 @@ services:
     restart: unless-stopped
     network_mode: host
     environment:
-      # Cambiar a "browser" para iniciar sesión mediante el navegador.
-      LOGIN_MODE: device
+      LOGIN_MODE: device # Cambiar a "browser" para iniciar sesión mediante el navegador.
       PORT: 10531
-      TZ: Europe/Madrid
-      # Opcionales. MODEL_TEST solo se usa para la prueba cron.
-      MODEL_TEST: ""
-      # Varios horarios se separan con: 5 4 * * * | 2 4 * * *
-      CRON_TEST: ""
-      # Tiempo máximo de cada petición de la prueba cron.
-      HEALTHCHECK_TIMEOUT_MS: 30000
+      TZ: Europe/Madrid # Modelo usado por las pruebas cron y de inicio; vacío usa el primero de /v1/models.
+      MODEL_TEST: "gpt-6.1-sol" # Modelo usado por las pruebas cron y de inicio; vacío usa el primero de /v1/models.
+      CRON_TEST: "" # Varios horarios se separan con: 5 4 * * * | 2 4 * * *
+      CRON_TEST_COUNT: 3 # Número total de respuestas OK consecutivas exigidas en cada ejecución.
+      STARTUP_MODEL_TEST: true # Ejecuta las mismas pruebas al arrancar si auth.json ya existía.
+      HEALTHCHECK_TIMEOUT_MS: 30000 # Tiempo máximo de cada petición de prueba, tanto cron como de inicio.
     volumes:
       - openai-oauth-data:/data/codex
 

@@ -6,6 +6,8 @@ HOST="${HOST:-127.0.0.1}"
 PORT="${PORT:-10531}"
 MODEL_TEST="${MODEL_TEST:-}"
 CRON_TEST="${CRON_TEST:-}"
+CRON_TEST_COUNT="${CRON_TEST_COUNT:-1}"
+STARTUP_MODEL_TEST="${STARTUP_MODEL_TEST:-false}"
 HEALTHCHECK_TIMEOUT_MS="${HEALTHCHECK_TIMEOUT_MS:-30000}"
 TZ_VALUE="${TZ:-Etc/UTC}"
 
@@ -98,6 +100,32 @@ if [ "$HEALTHCHECK_TIMEOUT_MS" -lt 1 ]; then
     exit 2
 fi
 
+case "$CRON_TEST_COUNT" in
+    ''|*[!0-9]*)
+        echo "[openai-oauth] ERROR: CRON_TEST_COUNT debe ser un entero entre 1 y 100." >&2
+        exit 2
+        ;;
+esac
+if [ "$CRON_TEST_COUNT" -lt 1 ] || [ "$CRON_TEST_COUNT" -gt 100 ]; then
+    echo "[openai-oauth] ERROR: CRON_TEST_COUNT debe ser un entero entre 1 y 100." >&2
+    exit 2
+fi
+
+case "$STARTUP_MODEL_TEST" in
+    true|false) ;;
+    *)
+        echo "[openai-oauth] ERROR: STARTUP_MODEL_TEST debe ser 'true' o 'false'." >&2
+        exit 2
+        ;;
+esac
+
+if { [ -n "$CRON_TEST" ] || [ "$STARTUP_MODEL_TEST" = true ]; } && \
+   [ -n "$MODEL_TEST" ] && \
+   ! printf '%s\n' "$MODEL_TEST" | grep -Eq '^[A-Za-z0-9._:-]+$'; then
+    echo "[openai-oauth] ERROR: MODEL_TEST contiene caracteres no válidos." >&2
+    exit 2
+fi
+
 if [ -n "${AUTH_FILE:-}" ]; then
     CODEX_HOME="$(dirname "$AUTH_FILE")"
 else
@@ -107,6 +135,11 @@ fi
 export CODEX_HOME AUTH_FILE
 
 mkdir -p "$CODEX_HOME"
+
+AUTH_EXISTED_AT_START=false
+if [ -s "$AUTH_FILE" ]; then
+    AUTH_EXISTED_AT_START=true
+fi
 
 echo "[openai-oauth] Auth file: $AUTH_FILE"
 echo "[openai-oauth] Login mode: $LOGIN_MODE"
@@ -142,11 +175,6 @@ else
 fi
 
 if [ -n "$CRON_TEST" ]; then
-    if [ -n "$MODEL_TEST" ] && ! printf '%s\n' "$MODEL_TEST" | grep -Eq '^[A-Za-z0-9._:-]+$'; then
-        echo "[openai-oauth] ERROR: MODEL_TEST contiene caracteres no válidos." >&2
-        exit 2
-    fi
-
     CRON_FILE=/etc/cron.d/openai-oauth-health
     printf 'SHELL=/bin/sh\nPATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\nMAILTO=""\nTZ=%s\n' \
         "$TZ_VALUE" > "$CRON_FILE"
@@ -169,8 +197,8 @@ if [ -n "$CRON_TEST" ]; then
             exit 2
         fi
 
-        printf '%s root PORT=%s MODEL_TEST=%s HEALTHCHECK_TIMEOUT_MS=%s /usr/local/bin/node /usr/local/lib/openai-oauth-healthcheck.mjs >> /proc/1/fd/1 2>> /proc/1/fd/2\n' \
-            "$CRON_EXPRESSION" "$PORT" "$MODEL_TEST" "$HEALTHCHECK_TIMEOUT_MS" >> "$CRON_FILE"
+        printf '%s root PORT=%s MODEL_TEST=%s CRON_TEST_COUNT=%s HEALTHCHECK_TIMEOUT_MS=%s /usr/local/bin/node /usr/local/lib/openai-oauth-healthcheck.mjs >> /proc/1/fd/1 2>> /proc/1/fd/2\n' \
+            "$CRON_EXPRESSION" "$PORT" "$MODEL_TEST" "$CRON_TEST_COUNT" "$HEALTHCHECK_TIMEOUT_MS" >> "$CRON_FILE"
         CRON_COUNT=$((CRON_COUNT + 1))
         echo "[openai-oauth] Cron añadido: $CRON_EXPRESSION"
     done
@@ -183,6 +211,35 @@ else
 fi
 
 echo "[openai-oauth] Arrancando servicio en ${HOST}:${PORT}..."
+
+if [ "$STARTUP_MODEL_TEST" = true ]; then
+    if [ "$AUTH_EXISTED_AT_START" = true ]; then
+        echo "[openai-oauth] Prueba de modelo al inicio activada; esperando al endpoint local..."
+        (
+            STARTUP_WAIT_ATTEMPT=0
+            while [ "$STARTUP_WAIT_ATTEMPT" -lt 60 ]; do
+                if curl --fail --silent --max-time 1 \
+                    "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
+                    TEST_CONTEXT=startup \
+                    PORT="$PORT" \
+                    MODEL_TEST="$MODEL_TEST" \
+                    CRON_TEST_COUNT="$CRON_TEST_COUNT" \
+                    HEALTHCHECK_TIMEOUT_MS="$HEALTHCHECK_TIMEOUT_MS" \
+                    /usr/local/bin/node /usr/local/lib/openai-oauth-healthcheck.mjs
+                    exit $?
+                fi
+                STARTUP_WAIT_ATTEMPT=$((STARTUP_WAIT_ATTEMPT + 1))
+                sleep 1
+            done
+            echo "[openai-oauth][startup] ERROR $(date '+%Y-%m-%d %H:%M:%S') El endpoint local no estuvo disponible durante los primeros 60 segundos." >&2
+            exit 1
+        ) &
+    else
+        echo "[openai-oauth] Prueba de modelo al inicio omitida: auth.json no existía antes de arrancar."
+    fi
+else
+    echo "[openai-oauth] Prueba de modelo al inicio desactivada."
+fi
 
 set -- openai-oauth \
     --host "$HOST" \
