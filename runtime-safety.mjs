@@ -97,13 +97,6 @@ export async function writeResponse(response, webResponse) {
  } finally { response.off('close', cancel); await reader.cancel().catch(() => {}); reader.releaseLock() }
 }
 
-const limitKeys = ['max_tokens', 'max_completion_tokens', 'max_output_tokens', 'maxOutputTokens', 'max_new_tokens']
-export const hasUnsupportedLimit = body => {
- const record = value => value !== null && typeof value === 'object' && !Array.isArray(value)
- const has = value => record(value) && limitKeys.some(key => Object.hasOwn(value, key))
- return has(body) || (record(body) && has(body.generation_config))
-}
-
 export const safeChatSummary = body => ({
  messageCount: Array.isArray(body.messages) ? body.messages.length : 0,
  stream: body.stream === true,

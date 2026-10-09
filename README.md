@@ -336,11 +336,11 @@ instalado, no el archivo de inspección. Exige openai-oauth/local/core 2.0.0 y
 firmas SHA-256 exactas de las dependencias modificadas; cambios incompatibles
 fallan antes de escribir. Se valida idempotencia en copias aisladas.
 
-**Límites de tokens:** Chat y Responses rechazan campos explícitos `max_tokens`,
-`max_completion_tokens` y `max_output_tokens` con HTTP 400 y tipo
-`unsupported_token_limit`. El transporte Codex observado elimina el límite;
-no se promete ni simula un límite de consumo. Requests sin esos campos siguen
-admitidos. El healthcheck ya no solicita un límite de tokens.
+**Límites de generación:** el adaptador no rechaza preventivamente los campos
+OpenAI de límite de tokens. Esto mantiene compatibilidad con clientes como
+OpenClaw, que incluyen estos campos en peticiones normales. El transporte Codex
+observado puede no conservar esos límites en la solicitud remota, por lo que no
+se garantiza que limiten el consumo.
 `UPSTREAM_TIMEOUT_MS` (30000 por defecto) limita temporalmente fetch/refresh y
 el trabajo Chat; no garantiza ausencia de consumo después de cancelar en el
 servidor remoto. `HEALTHCHECK_TIMEOUT_MS` limita cada petición de la prueba.
@@ -371,12 +371,11 @@ failed/incomplete/cancelled/error o abort generan error saneado: JSON falla ante
 del 200; streaming corta/error, sin DONE exitoso de Chat. Un stream puede haber
 entregado deltas antes del corte: el cliente debe manejar errores de transporte.
 
-Se rechazan por presencia (incluso null) `max_tokens`, `max_completion_tokens`,
-`max_output_tokens`, `maxOutputTokens` y `max_new_tokens`, tanto en raíz como en
-`generation_config`, antes de autenticar/inferir. No se recorren tools, schemas,
-input o messages. Otros campos desconocidos no implican soporte ni límite de
-consumo: sólo esas posiciones/nombres tienen rechazo garantizado; no existe un
-límite remoto de tokens acreditado. Requests sin ellos mantienen compatibilidad.
+No se rechazan preventivamente `max_tokens`, `max_completion_tokens` ni los
+payloads con tools. Los campos se procesan según el endpoint y la versión fijada
+del adaptador. Esta decisión prioriza compatibilidad de protocolo y evita
+devolver 400 a peticiones normales de OpenClaw. No acredita que el servidor
+remoto vaya a respetar los límites de generación.
 
 Discovery propaga deadline del consumidor a auth y catálogo/registry compartidos;
 cancelar uno conserva otros consumidores, cancelar último aborta recursos activos.

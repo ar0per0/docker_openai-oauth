@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { request as httpRequest } from 'node:http'
 import { patchOpenAIOAuth } from '../patch-openai-oauth.mjs'
-import { hasUnsupportedLimit, safeChatSummary } from '../runtime-safety.mjs'
+import { safeChatSummary } from '../runtime-safety.mjs'
 const fixture = async fn => {
  const root=await mkdtemp(join(tmpdir(),'oauth-closure-'))
  try {
@@ -36,14 +36,18 @@ test('all real routes reject created-only EOF and failed/incomplete/error; succe
  if(path==='chat/completions'){assert.match(text,/"prompt_tokens":null/);if(stream)assert.match(text,/\[DONE\]/)}
  }
 }))
-test('limits root and generation_config reject before session; tool payload is not configuration',()=>fixture(async({createOpenAIOAuthFetchHandler},session)=>{
- const handler=createOpenAIOAuthFetchHandler({fetch:()=>{throw Error('must not call')}})
- for(const path of ['chat/completions','responses'])for(const key of ['max_tokens','max_completion_tokens','max_output_tokens','maxOutputTokens','max_new_tokens'])for(const nested of [false,true]){
- const body={messages:[],input:[],...(nested?{generation_config:{[key]:1}}:{[key]:1})}
- const response=await handler(req(path,body));assert.equal(response.status,400);assert.equal((await response.json()).error.type,'unsupported_token_limit')
- }
- assert.equal(session.calls,0)
- assert.equal(hasUnsupportedLimit({tools:[{function:{parameters:{properties:{max_tokens:{type:'number'}}}}}],input:[{max_tokens:1}]}),false)
+test('OpenClaw Chat payload with tools and token limit is accepted',()=>fixture(async({createOpenAIOAuthFetchHandler})=>{
+ let received
+ const handler=createOpenAIOAuthFetchHandler({codexVersion:'0.144.1',fetch:async(url,init)=>{
+  if(url.includes('/models'))return Response.json({models:[{slug:'synthetic'}]})
+  received=JSON.parse(init.body)
+  return new Response(event('response.completed','completed'),{headers:{'content-type':'text/event-stream'}})
+ }})
+ const body={model:'synthetic',max_completion_tokens:128,messages:[{role:'user',content:'synthetic'}],tools:[{type:'function',function:{name:'synthetic_tool',description:'synthetic',parameters:{type:'object',properties:{value:{type:'string'}},required:['value']}}}]}
+ const response=await handler(req('chat/completions',body))
+ assert.equal(response.status,200)
+ assert.ok(received && typeof received === 'object')
+ assert.ok(Array.isArray(received.tools))
 }))
 test('safe request logs omit arbitrary values and free key names',()=>{
  const output=JSON.stringify(safeChatSummary({PRIVATE_KEY:'PRIVATE_SECRET',model:'PRIVATE_SECRET',reasoning_effort:{secret:'PRIVATE_SECRET'},messages:[{role:'PRIVATE_SECRET'}],tools:[],stream:true}))

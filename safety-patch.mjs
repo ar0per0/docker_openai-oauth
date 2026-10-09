@@ -103,8 +103,6 @@ export function prepareSafety(root, source) {
   if (a < 0 || b < 0) throw new Error('Response adapter drift')
   source = source.slice(0,a) + 'var writeWebResponse = writeResponse;\n' + source.slice(b)
   source = unique(source, '      const request = await toWebRequest(req, { host, port });', '      const controller = new AbortController();\n      req.once("aborted", () => controller.abort());\n      res.once("close", () => controller.abort());\n      const request = await toWebRequest(req, { host, port, signal: boundedSignal(controller.signal) });')
-  source = unique(source, '  const body = await request.json();\n  if (!isChatRequest', '  const body = await request.json();\n  if (hasUnsupportedLimit(body)) return toErrorResponse("Explicit token limits are unsupported by this OAuth transport.", 400, "unsupported_token_limit");\n  if (!isChatRequest')
-  source = unique(source, '  if (usesServerReplayState(body)) {', '  if (hasUnsupportedLimit(body)) return toErrorResponse("Explicit token limits are unsupported by this OAuth transport.", 400, "unsupported_token_limit");\n  if (usesServerReplayState(body)) {')
   source = unique(source, '    return streamChatCompletions(body, provider, {', '    return streamChatCompletions({ ...body, abortSignal: request.signal }, provider, {')
   source = unique(source, '    maxOutputTokens: request.max_tokens,', '    abortSignal: boundedSignal(request.abortSignal),\n    maxOutputTokens: request.max_completion_tokens ?? request.max_tokens,')
   source = unique(source, '      maxOutputTokens: body.max_tokens,', '      abortSignal: boundedSignal(request.signal),\n      maxOutputTokens: body.max_completion_tokens ?? body.max_tokens,')
@@ -127,7 +125,7 @@ export function prepareSafety(root, source) {
   source = source.replaceAll('error instanceof Error ? error.message : "Unexpected server error."', '"Upstream request failed."')
   source = source.replaceAll('error instanceof Error ? error.message : "Failed to load models."', '"Model discovery unavailable."')
   source = source.replaceAll('part.error instanceof Error ? part.error.message : "Streaming chat completion failed."', '"Upstream stream failed."')
-  source = 'import { boundedFetch, boundedSignal, demandStream, writeResponse, hasUnsupportedLimit, readLimitedBody, safeChatSummary, waitFor } from "./runtime-safety.mjs";\n' + source
+  source = 'import { boundedFetch, boundedSignal, demandStream, writeResponse, readLimitedBody, safeChatSummary, waitFor } from "./runtime-safety.mjs";\n' + source
  }
  if (currentServer.includes('// oauth-server-safety-v2') && currentServer !== source) throw new Error('Modified safety server')
  writes.push([serverFile + '.oauth-before-safety', beforeSafety])

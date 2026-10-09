@@ -44,10 +44,6 @@ test('real pinned package: single flight, scoped identity, permissions, strict S
  const {createOpenAIOAuthFetchHandler}=await import(`file://${root}/dist/index.js`)
  let upstream=0
  const handler=createOpenAIOAuthFetchHandler({authFilePath:join(root,'missing-synthetic.json'),fetch:async()=>{upstream++;throw Error('private')}})
- for(const path of ['chat/completions','responses']) for(const limit of ['max_tokens','max_completion_tokens','max_output_tokens']) {
- const response=await handler(new Request('http://localhost/v1/'+path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({messages:[],input:[],[limit]:128})}));assert.equal(response.status,400);assert.equal((await response.json()).error.type,'unsupported_token_limit')
- }
- assert.equal(upstream,0)
  const allowed=await handler(new Request('http://localhost/v1/responses',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({input:[]})}));assert.notEqual(allowed.status,400);assert.doesNotMatch(await allowed.text(),/private/)
  const {openaiCredentials}=await import(`file://${root}/node_modules/@openai-oauth/local/dist/index.js`)
  const file=join(root,'synthetic.json');await writeFile(file,JSON.stringify({tokens:{access_token:'synthetic',refresh_token:'synthetic-refresh',account_id:'account'},last_refresh:'2000-01-01T00:00:00Z'}),{mode:0o644})
