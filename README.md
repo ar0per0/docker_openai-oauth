@@ -48,7 +48,6 @@ Captura modo browser:
 
 ## Detalle
 
-
 ```bash
 docker compose build --no-cache
 ```
@@ -220,3 +219,179 @@ docker compose down -v
 La configuración predeterminada enlaza el proxy a `127.0.0.1`. No cambies
 `HOST` a `0.0.0.0` en una máquina accesible desde Internet sin colocar delante
 autenticación y TLS.
+
+## Cuotas OAuth (API experimental)
+
+`GET /oauth/rate-limits` consulta `https://chatgpt.com/backend-api/wham/usage`
+con la sesión del **mismo** `auth.getSession()` que usa el proxy. No hay otro
+lector, propietario ni refrescador de credenciales. No recibe tokens OAuth del
+cliente; reemplaza el contexto por access token y cuenta/workspace de la sesión.
+El resto de endpoints conserva su autenticación original (este parche no los protege).
+
+El endpoint local es público: no requiere clave interna ni Bearer del cliente.
+Cualquier cliente con acceso al puerto OAuth puede consultar el consumo; limita
+ese puerto y el del panel router a clientes de confianza de tu red local.
+Esto **no** elimina las credenciales reales: `auth.getSession()` sigue siendo
+obligatorio y su token/cuenta autorizan exclusivamente la llamada a ChatGPT;
+no se reenvía el Authorization del cliente. Método distinto de GET: `405`.
+Sesión no disponible: `503`; upstream fallido, timeout de 10 segundos o esquema
+incompatible: `502`. No se devuelve el cuerpo de error upstream. La lectura de
+su respuesta está acotada a 256 KiB. Respuestas `Cache-Control: no-store`, sin
+logs de peticiones ni cuotas. No hay reintentos, llamadas de modelo ni canje de créditos.
+
+Ejemplo sin clave local:
+
+```bash
+curl --fail --silent --show-error http://127.0.0.1:10531/oauth/rate-limits
+```
+
+No compartas la salida si revela cuotas de tu cuenta ni registres credenciales OAuth.
+
+Contrato propio, subconjunto normalizado del RPC oficial:
+
+- `ordinaryUsageAllowed`: boolean o `null`; nunca se infiere recuperación.
+- `rateLimits`: cuota histórica `codex`.
+- `rateLimitsByLimitId`: incluye `codex` y todos los `metered_feature` adicionales;
+  IDs duplicados se rechazan, no se sobrescriben silenciosamente.
+- Cada cuota: `limitId`, `limitName`, `normalModelSlug`, `planType`, `primary`,
+  `secondary`, `credits`. Campos desconocidos/ausentes quedan `null`.
+- Cada ventana: `usedPercent` es porcentaje **consumido**, no restante;
+  `windowDurationMins` viene de `limit_window_seconds` (redondeo hacia arriba
+  como Codex; duración no positiva: `null`); `resetsAt` es Unix en **segundos**.
+  `primary` no significa 5 horas ni `secondary` necesariamente una semana.
+  No se inventa un reset usando `reset_after_seconds`.
+- `credits`: `null` o `{hasCredits, unlimited, balance}`. `balance` es string
+  nullable del backend, sin convertir a número ni atribuir dólares/tokens.
+
+No es una implementación completa del RPC: omite spend-control, reset-credit
+summary, identidad y banners; no ofrece permisos ni acciones de canje.
+`account/rateLimits/read` es **RPC de Codex app-server, NO endpoint HTTP** de
+ChatGPT. El HTTP `/wham/usage` usa snake_case; no debe confundirse con el RPC.
+Ambas APIs internas son **unstable**, pueden cambiar y no garantizan disponibilidad.
+
+Preflight: `openai-oauth` npm 2.0.0 ya ofrece el session manager pero no esta ruta;
+Codex ofrece lectura RPC, no este endpoint HTTP. Se reutiliza el primero con un
+parche pequeño, sin instalar servicios adicionales ni plataformas de pago.
+Referencia oficial revisada: commit
+`afb436df8b70bb5bc57b86d9a3e829968988cd21` de
+[openai/codex](https://github.com/openai/codex/tree/afb436df8b70bb5bc57b86d9a3e829968988cd21):
+`codex-rs/backend-client/src/client.rs`, `src/client/rate_limit_resets.rs`,
+`src/types.rs` y `codex-rs/app-server-protocol/schema/typescript/v2/{GetAccountRateLimitsResponse,RateLimitSnapshot,RateLimitWindow,CreditsSnapshot}.ts`.
+
+## Verificación local sin credenciales ni despliegue
+
+Las pruebas utilizan únicamente sesiones y respuestas sintéticas. El test de
+integración requiere una copia real del paquete npm con dependencias aisladas:
+
+```bash
+mkdir -p .inspection/verification
+curl -fsSL https://registry.npmjs.org/openai-oauth/-/openai-oauth-2.0.0.tgz \
+  -o .inspection/verification/package.tgz
+tar -xzf .inspection/verification/package.tgz -C .inspection/verification
+npm install --prefix .inspection/verification/package --ignore-scripts --no-fund --package-lock-only
+npm ci --prefix .inspection/verification/package --ignore-scripts --no-fund
+node --test test/*.test.mjs
+node --check oauth-rate-limits.mjs
+node --check patch-openai-oauth.mjs
+sh -n entrypoint.sh
+# No carga .env durante esta validación.
+docker compose --env-file /dev/null config --quiet
+npm audit --prefix .inspection/verification/package --omit=dev
+```
+
+El parche comprueba nombre/versión exactos **2.0.0**, anclas únicas y compatibilidad
+antes de escribir; acepta el parche anterior de imágenes y es idempotente.
+En build también admite un paquete ya parcheado: tras validar todas las anclas,
+reemplaza el helper de cuotas por la versión actual sin clave local, conservando
+el chunk de imágenes y la integración del mismo session manager.
+`CODEX_VERSION=latest` no cambia. Healthcheck conserva solo resultado final,
+sin imprimir respuestas inesperadas ni cuerpos de error. La configuración del
+endpoint rechaza contenedores incompatibles (listas/strings en lugar de objetos);
+los campos escalares desconocidos siguen siendo `null`, no cero.
+
+`npm audit --omit=dev` puede devolver un código distinto de cero aunque las
+pruebas pasen. En la verificación del 2026-10-05 informó 5 avisos de gravedad baja
+por GHSA-866g-f22w-33x8 en la cadena AI SDK, sin solución automática compatible
+con el paquete fijado. No se ejecuta `npm audit fix --force`: cambiar dependencias
+requiere otra revisión. La integración usa el handler real parcheado con sesión
+sintética; no prueba OAuth real ni disponibilidad de ChatGPT. Si Docker no es
+accesible, `compose config` valida solo configuración, no construcción ni arranque.
+Para reconstruir después de cambiar el parche usa `docker compose build --no-cache`
+en un equipo autorizado; no requiere reiniciar el daemon.
+
+### Usage Chat — 2026-10-07
+El parche de build para npm openai-oauth@2.0.0 convierte métricas AI SDK ausentes
+con `?? null` en vez de `?? 0` (prompt/completion/total); conserva cero explícito,
+details, imágenes y endpoint cuotas. Validación estricta e idempotente antes de
+mutaciones. Baseline .inspection archivado no modificado. Corrección de source,
+no desplegada; rebuild/deploy de esta imagen es opcional para usar el router.
+No acredita contabilidad real ni corrige ceros ya producidos por AI SDK; las
+métricas siguen siendo reportadas por upstream. Sin modificación de requests ni
+stream_options. Test dirigido en copia temporal del npm real fuera de .inspection.
+
+### Seguridad del transporte — corrección de source
+
+El build copia `safety-patch.mjs` y `runtime-safety.mjs` y parchea el paquete
+instalado, no el archivo de inspección. Exige openai-oauth/local/core 2.0.0 y
+firmas SHA-256 exactas de las dependencias modificadas; cambios incompatibles
+fallan antes de escribir. Se valida idempotencia en copias aisladas.
+
+**Límites de tokens:** Chat y Responses rechazan campos explícitos `max_tokens`,
+`max_completion_tokens` y `max_output_tokens` con HTTP 400 y tipo
+`unsupported_token_limit`. El transporte Codex observado elimina el límite;
+no se promete ni simula un límite de consumo. Requests sin esos campos siguen
+admitidos. El healthcheck ya no solicita un límite de tokens.
+`UPSTREAM_TIMEOUT_MS` (30000 por defecto) limita temporalmente fetch/refresh y
+el trabajo Chat; no garantiza ausencia de consumo después de cancelar en el
+servidor remoto. `HEALTHCHECK_TIMEOUT_MS` limita cada petición de la prueba.
+
+Refresh se comparte por ruta de credencial/client/issuer/token endpoint dentro
+de un proceso. Cancelar un consumidor no cancela a otros; cancelar el último
+aborta el fetch. **No hay bloqueo entre procesos**: no comparta el mismo volumen
+de credenciales entre instancias escritoras. Escrituras usan archivo temporal
+0600, fsync, rename y fsync del directorio. Directorios nuevos son 0700; no se
+cambian permisos de padres existentes potencialmente compartidos. Archivos
+existentes se reemplazan privados al guardar; no se endurecen sólo al leer.
+
+El adaptador HTTP propaga desconexión, cancela lectores y espera drain; Chat
+produce según demanda. EOF sin evento terminal completado falla, no genera
+éxito. Errores generales públicos y logs Chat usan mensajes estables. IDs de
+modelo del healthcheck son validados y timestamp incluye instante UTC para DST.
+Descubrimiento de modelos usa fetch acotado; `/health` sigue siendo liveness.
+
+Estas comprobaciones son sintéticas, sin OAuth/inferencia real ni Docker build,
+arranque o despliegue. Las firmas verifican la copia local 2.0.0, no acreditan
+qué imagen está desplegada ni disponibilidad de protocolos internos de ChatGPT.
+
+### Cierre de auditoría: contrato de seguridad v2
+
+El parche de build valida SSE antes de AI SDK y del collector Responses. Sólo
+`response.completed` con status `completed` permite éxito. EOF sin terminal,
+failed/incomplete/cancelled/error o abort generan error saneado: JSON falla antes
+del 200; streaming corta/error, sin DONE exitoso de Chat. Un stream puede haber
+entregado deltas antes del corte: el cliente debe manejar errores de transporte.
+
+Se rechazan por presencia (incluso null) `max_tokens`, `max_completion_tokens`,
+`max_output_tokens`, `maxOutputTokens` y `max_new_tokens`, tanto en raíz como en
+`generation_config`, antes de autenticar/inferir. No se recorren tools, schemas,
+input o messages. Otros campos desconocidos no implican soporte ni límite de
+consumo: sólo esas posiciones/nombres tienen rechazo garantizado; no existe un
+límite remoto de tokens acreditado. Requests sin ellos mantienen compatibilidad.
+
+Discovery propaga deadline del consumidor a auth y catálogo/registry compartidos;
+cancelar uno conserva otros consumidores, cancelar último aborta recursos activos.
+Startup tiene un deadline global UPSTREAM_TIMEOUT_MS, además de límites de fetch.
+Los logs Chat opcionales sólo resumen counts y stream, sin model, roles, claves
+libres ni reasoning arbitrario. No se garantiza sanitización de callbacks de
+logging personalizados externos ni de todos los mensajes del CLI de terceros.
+
+HTTP limita cuerpos a **16 MiB**, antes de JSON/form parse, con **413** y mensaje
+estable. El router hermano admite 32 MiB: su máximo no amplía el del OAuth.
+Chunks se cuentan incrementalmente; concatenación/Blob puede requerir copias en
+memoria. No es un límite global de memoria ni de conexiones. SSE limita a 16 MiB
+el bloque parcial pendiente de separador, no el total del stream.
+
+Transformación v2 conserva originales firmados y verifica reapply y upgrade v1
+exacto antes de escribir. Requiere rebuild autorizado para llegar a una imagen;
+pruebas con paquete npm aislado y mocks/HTTP loopback no validan producción,
+OAuth real, comportamiento remoto, Docker/Node 22, cron/DST ni volumen desplegado.

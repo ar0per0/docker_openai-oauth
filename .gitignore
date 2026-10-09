@@ -4,3 +4,7 @@ auth.json
 data/
 node_modules/
 npm-debug.log*
+
+.inspection/
+
+.inspection/

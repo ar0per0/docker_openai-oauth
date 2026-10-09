@@ -35,7 +35,7 @@ const localTimestamp = (date = new Date()) => {
 			.filter(({ type }) => type !== "literal")
 			.map(({ type, value }) => [type, value]),
 	)
-	return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`
+	return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second} zone=${timeZone} instant=${date.toISOString()}`
 }
 
 const requestJson = async (url, options = {}) => {
@@ -50,21 +50,25 @@ const requestJson = async (url, options = {}) => {
 	})
 	const body = await response.text()
 	if (!response.ok) {
-		throw new Error(`HTTP ${response.status}: ${body.slice(0, 500)}`)
+		throw new Error(`HTTP ${response.status}`)
 	}
 	if (!body) return {}
 	try {
 		return JSON.parse(body)
 	} catch {
-		throw new Error(`Respuesta JSON no válida de ${url}: ${body.slice(0, 500)}`)
+		throw new Error("Respuesta JSON no válida")
 	}
 }
 
 const resolveModel = async () => {
-	if (process.env.MODEL_TEST) return process.env.MODEL_TEST
+	if (process.env.MODEL_TEST) {
+		if (!/^[A-Za-z0-9._:-]{1,128}$/.test(process.env.MODEL_TEST)) throw new Error('Identificador de modelo no válido')
+		return process.env.MODEL_TEST
+	}
 	const models = await requestJson(`${baseUrl}/models`)
 	const model = models.data?.[0]?.id
 	if (!model) throw new Error("No hay ningún modelo disponible")
+	if (typeof model !== 'string' || !/^[A-Za-z0-9._:-]{1,128}$/.test(model)) throw new Error('Identificador de modelo no válido')
 	return model
 }
 
@@ -132,13 +136,12 @@ try {
 						content: `Realiza esta comprobación internamente: calcula ${challenge.expression} y comprueba que el resultado sea ${challenge.result}. Si es correcto, responde única y exactamente con la palabra OK, en mayúsculas, sin comillas, explicaciones, puntuación ni espacios adicionales. Si no es correcto, responde ERROR.`,
 					},
 				],
-				max_completion_tokens: 128,
 			}),
 		})
 		const answer = result.choices?.[0]?.message?.content
 		if (answer !== "OK") {
 			throw new Error(
-				`Comprobación ${check}/${testCount}: respuesta inesperada del modelo: ${JSON.stringify(answer)}`,
+				`Comprobación ${check}/${testCount}: respuesta inesperada del modelo`,
 			)
 		}
 	}

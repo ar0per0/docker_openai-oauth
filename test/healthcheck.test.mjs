@@ -94,7 +94,7 @@ test("detiene la serie y registra ERROR ante el primer resultado incorrecto", as
 		assert.equal(getRequests(), 2)
 		assert.equal(result.stdout, "")
 		assert.match(result.stderr, /Comprobación 2\/3/)
-		assert.match(result.stderr, /respuesta inesperada del modelo: "ERROR"/)
+		assert.match(result.stderr, /respuesta inesperada del modelo/)
 	})
 })
 
@@ -113,4 +113,22 @@ test("identifica separadamente una comprobación ejecutada al inicio", async () 
 		assert.match(result.stdout, /^\[openai-oauth\]\[startup\] OK /)
 		assert.doesNotMatch(result.stdout, /\[cron\]/)
 	})
+})
+
+test('rechaza respuesta OK con espacios sin aceptar near-match',async()=>{
+ await withMockServer(['OK '],async({port})=>{const r=await runHealthcheck({port,count:1});assert.equal(r.code,1);assert.equal(r.stdout,'')})
+})
+test('ID de modelo descubierto no puede inyectar log; HTTP JSON timeout no filtran cuerpo',async()=>{
+ for(const mode of ['model','http','json','timeout']){
+ const server=createServer((req,res)=>{req.resume();req.on('end',()=>{
+ if(mode==='timeout')return
+ if(mode==='model')return res.end(JSON.stringify({data:[{id:'synthetic\nFORGED_LOG'}]}))
+ if(mode==='http')res.statusCode=500
+ res.end('SYNTHETIC_PRIVATE_BODY')
+ })});server.listen(0,'127.0.0.1');await once(server,'listening')
+ try{
+ const child=spawn(process.execPath,[healthcheckPath.pathname],{env:{PATH:process.env.PATH,PORT:String(server.address().port),MODEL_TEST:mode==='model'?'':'synthetic',TZ:'Europe/Madrid',HEALTHCHECK_TIMEOUT_MS:'100',CRON_TEST_COUNT:'1'},stdio:['ignore','pipe','pipe']})
+ let output='';child.stdout.on('data',c=>output+=c);child.stderr.on('data',c=>output+=c);const [code]=await once(child,'close');assert.equal(code,1);assert.doesNotMatch(output,/SYNTHETIC_PRIVATE_BODY|FORGED_LOG/);assert.equal(output.trim().split('\n').length,1)
+ }finally{server.closeAllConnections();await new Promise(r=>server.close(r))}
+ }
 })

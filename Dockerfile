@@ -1,6 +1,6 @@
 FROM node:22-bookworm-slim
 
-ARG OPENAI_OAUTH_VERSION=2.0.0
+ENV OPENAI_OAUTH_VERSION=2.0.0
 ARG CODEX_VERSION=latest
 
 # `codex login --device-auth` invokes curl to perform the device-code flow.
@@ -22,7 +22,11 @@ RUN apt-get update \
 
 COPY entrypoint.sh /usr/local/bin/openai-oauth-entrypoint
 COPY healthcheck.mjs /usr/local/lib/openai-oauth-healthcheck.mjs
+COPY oauth-rate-limits.mjs /usr/local/lib/oauth-rate-limits.mjs
 COPY patch-openai-oauth.mjs /usr/local/lib/patch-openai-oauth.mjs
+COPY safety-patch-v1.mjs /usr/local/lib/safety-patch-v1.mjs
+COPY safety-patch.mjs /usr/local/lib/safety-patch.mjs
+COPY runtime-safety.mjs /usr/local/lib/runtime-safety.mjs
 RUN node /usr/local/lib/patch-openai-oauth.mjs /usr/local/lib/node_modules/openai-oauth
 RUN chmod 0755 /usr/local/bin/openai-oauth-entrypoint
 
@@ -34,6 +38,7 @@ ENV CODEX_HOME=/data/codex \
     CRON_TEST_COUNT=1 \
     STARTUP_MODEL_TEST=false \
     HEALTHCHECK_TIMEOUT_MS=30000 \
+    UPSTREAM_TIMEOUT_MS=30000 \
     TZ=Etc/UTC \
     HOST=127.0.0.1 \
     PORT=10531
