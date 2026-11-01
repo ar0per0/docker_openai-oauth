@@ -106,7 +106,7 @@ export function prepareSafety(root, source) {
   source = unique(source, '    return streamChatCompletions(body, provider, {', '    return streamChatCompletions({ ...body, abortSignal: request.signal }, provider, {')
   source = unique(source, '    maxOutputTokens: request.max_tokens,', '    abortSignal: boundedSignal(request.abortSignal),\n    maxOutputTokens: request.max_completion_tokens ?? request.max_tokens,')
   source = unique(source, '      maxOutputTokens: body.max_tokens,', '      abortSignal: boundedSignal(request.signal),\n      maxOutputTokens: body.max_completion_tokens ?? body.max_tokens,')
-  source = unique(source, '  const result = streamText({', '  const streamAbort = new AbortController();\n  const result = streamText({')
+  source = unique(source, '  const result = streamText({', '  const streamAbort = new AbortController();\n  const result = streamText({\n    onError: () => {},')
   source = unique(source, 'abortSignal: boundedSignal(request.abortSignal)', 'abortSignal: boundedSignal(AbortSignal.any([streamAbort.signal, ...(request.abortSignal ? [request.abortSignal] : [])]))')
   source = unique(source, '  const stream = new ReadableStream({\n    async start(controller) {', '  const stream = demandStream(async (controller) => {')
   source = unique(source, '      controller.close();\n    }\n  });', '      controller.close();\n  }, () => streamAbort.abort());')
@@ -127,7 +127,8 @@ export function prepareSafety(root, source) {
   source = source.replaceAll('part.error instanceof Error ? part.error.message : "Streaming chat completion failed."', '"Upstream stream failed."')
   source = 'import { boundedFetch, boundedSignal, demandStream, writeResponse, readLimitedBody, safeChatSummary, waitFor } from "./runtime-safety.mjs";\n' + source
  }
- if (currentServer.includes('// oauth-server-safety-v2') && currentServer !== source) throw new Error('Modified safety server')
+ const previousServer = source.replace('  const result = streamText({\n    onError: () => {},', '  const result = streamText({')
+ if (currentServer.includes('// oauth-server-safety-v2') && currentServer !== source && currentServer !== previousServer) throw new Error('Modified safety server')
  writes.push([serverFile + '.oauth-before-safety', beforeSafety])
  return { source, writes }
 }

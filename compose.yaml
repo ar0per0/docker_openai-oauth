@@ -20,6 +20,9 @@ services:
       STARTUP_MODEL_TEST: true
       # Tiempo máximo de cada petición de prueba, tanto cron como de inicio.
       HEALTHCHECK_TIMEOUT_MS: 30000
+      # Deadline absoluto de inferencia (incluye auth, discovery y lectura completa).
+      # Debe ser menor que el timeout del router y del cliente.
+      UPSTREAM_TIMEOUT_MS: ${UPSTREAM_TIMEOUT_MS:-180000}
     volumes:
       - openai-oauth-data:/data/codex
 

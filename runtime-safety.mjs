@@ -3,7 +3,7 @@ import { promises as fs } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
-export const boundedSignal = (signal, timeout = Number(process.env.UPSTREAM_TIMEOUT_MS || 30000)) => {
+export const boundedSignal = (signal, timeout = Number(process.env.UPSTREAM_TIMEOUT_MS || 180000)) => {
  if (!Number.isSafeInteger(timeout) || timeout < 1 || timeout > 2147483647) throw new Error('Invalid upstream timeout')
  return AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(timeout)])
 }
@@ -16,7 +16,8 @@ export const waitFor = (promise, signal) => new Promise((resolve, reject) => {
 })
 const flights = new Map()
 export async function singleFlight(key, operation, signal = boundedSignal()) {
- let flight = flights.get(key)
+  signal.throwIfAborted()
+  let flight = flights.get(key)
  if (!flight) {
   const controller = new AbortController()
   flight = { controller, waiters: 0 }
@@ -75,6 +76,10 @@ export const demandStream = (produce, abort) => {
  })
 }
 export async function writeResponse(response, webResponse) {
+ if (response.destroyed || response.socket?.destroyed || response.writableEnded) {
+  await webResponse.body?.cancel().catch(() => {})
+  return
+ }
  response.statusCode = webResponse.status
  webResponse.headers.forEach((value, key) => response.setHeader(key, value))
  if (!webResponse.body) { response.end(); return }
@@ -105,13 +110,19 @@ export const safeChatSummary = body => ({
 export class BodyLimitError extends Error { constructor() { super('Request body too large.'); this.status = 413 } }
 export async function readLimitedBody(request, signal) {
  const chunks = []; let bytes = 0
- for await (const chunk of request) {
+ const abort = () => request.destroy()
+ signal?.addEventListener('abort', abort, { once: true })
+ try {
+  if (signal?.aborted) { abort(); signal.throwIfAborted() }
+  for await (const chunk of request) {
+   signal?.throwIfAborted()
+   bytes += chunk.length
+   if (bytes > 16777216) throw new BodyLimitError()
+   chunks.push(Buffer.from(chunk))
+  }
   signal?.throwIfAborted()
-  bytes += chunk.length
-  if (bytes > 16777216) throw new BodyLimitError()
-  chunks.push(Buffer.from(chunk))
- }
- return Buffer.concat(chunks)
+  return Buffer.concat(chunks)
+ } finally { signal?.removeEventListener('abort', abort) }
 }
 // Validate before SDK parsing: EOF and failed terminals are stream errors, never DONE.
 export function terminalStream(body, signal) {

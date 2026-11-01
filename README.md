@@ -28,6 +28,7 @@ services:
       CRON_TEST_COUNT: 3 # Número total de respuestas OK consecutivas exigidas en cada ejecución.
       STARTUP_MODEL_TEST: true # Ejecuta las mismas pruebas al arrancar si auth.json ya existía.
       HEALTHCHECK_TIMEOUT_MS: 30000 # Tiempo máximo de cada petición de prueba, tanto cron como de inicio.
+      UPSTREAM_TIMEOUT_MS: ${UPSTREAM_TIMEOUT_MS:-180000} # Configurable en .env; milisegundos.
     volumes:
       - openai-oauth-data:/data/codex
 
@@ -341,9 +342,67 @@ OpenAI de límite de tokens. Esto mantiene compatibilidad con clientes como
 OpenClaw, que incluyen estos campos en peticiones normales. El transporte Codex
 observado puede no conservar esos límites en la solicitud remota, por lo que no
 se garantiza que limiten el consumo.
-`UPSTREAM_TIMEOUT_MS` (30000 por defecto) limita temporalmente fetch/refresh y
-el trabajo Chat; no garantiza ausencia de consumo después de cancelar en el
-servidor remoto. `HEALTHCHECK_TIMEOUT_MS` limita cada petición de la prueba.
+`UPSTREAM_TIMEOUT_MS` (**180000 ms por defecto**) es un deadline absoluto:
+limita fetch/refresh y la generación completa Chat/Responses, incluido el cuerpo
+SSE aunque siga llegando actividad. El anterior valor de 30000 ms cortaba
+respuestas largas a los 30 segundos, tanto con streaming (conexión incompleta)
+como sin streaming (`500 Upstream request failed.`). No era un fallo de OpenHands.
+No garantiza ausencia de consumo después de cancelar en el servidor remoto.
+`HEALTHCHECK_TIMEOUT_MS` sólo limita cada petición de la prueba; aumentarlo no
+amplía el plazo de inferencia.
+
+**Cambiar el tiempo sin editar Compose:** cree o edite el archivo `.env` junto
+a este `compose.yaml` y configure el valor en milisegundos. Por ejemplo, para
+permitir diez minutos de generación:
+
+```dotenv
+UPSTREAM_TIMEOUT_MS=600000
+```
+
+Aplique el cambio con `docker compose up -d openai-oauth`. Tras desplegar una vez
+la imagen corregida, cambiar sólo este valor **no requiere reconstruirla**;
+sí requiere recrear el contenedor (un simple `docker compose restart` no aplica
+cambios de entorno). También puede configurarlo para la ejecución de Compose:
+
+```sh
+UPSTREAM_TIMEOUT_MS=600000 docker compose up -d openai-oauth
+```
+
+El rango admitido por OAuth es 1–2147483647 ms. El router admite hasta
+3600000 ms (una hora). Cada proyecto lee su propio `.env`: si aumenta OAuth a
+600000, configure por ejemplo `UPSTREAM_TIMEOUT_MS=660000` en el `.env` del
+router y un timeout de cliente superior a 660000 ms. No copie el mismo límite
+a las tres capas sin dejar margen.
+
+Configure el timeout del router y del cliente por encima del deadline OAuth
+(por ejemplo OAuth **180000**, router **240000**, cliente **300000** ms). El router
+mide espera de cabeceras e inactividad del cuerpo, no duración total del stream.
+Si necesita generaciones de más de tres minutos, aumente los tres valores;
+las variables del cliente no pueden ampliar un deadline del servidor.
+
+Tras actualizar este código, reconstruya y recree el servicio para aplicar tanto
+el helper como el ENV de la imagen (desde este directorio):
+
+```sh
+docker compose up -d --build --force-recreate openai-oauth
+```
+
+No basta con reiniciar una imagen antigua. Un `UPSTREAM_TIMEOUT_MS=30000`
+explícito en otro Compose o `.env` debe actualizarse también. No se modifican
+credenciales ni volúmenes.
+
+Pruebas de regresión con el npm fijado instalado en
+`.inspection/verification/package`:
+
+```sh
+node --test
+LONG_GENERATION_TEST=1 ROUTER_PROJECT="$(realpath ../router-openai-oauth)" node --test test/long-generation.test.mjs
+```
+
+Para la prueba opcional, `ROUTER_PROJECT` debe ser una ruta **absoluta** al checkout
+del router (o se omite para probar sólo OAuth). Ocho peticiones concurrentes
+Chat/Responses, con/sin streaming, directas y vía router, duran más de 30 s.
+La inferencia y OAuth son sintéticos; HTTP y los adaptadores del npm son reales.
 
 Refresh se comparte por ruta de credencial/client/issuer/token endpoint dentro
 de un proceso. Cancelar un consumidor no cancela a otros; cancelar el último

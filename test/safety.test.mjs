@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { EventEmitter } from 'node:events'
 import { patchOpenAIOAuth } from '../patch-openai-oauth.mjs'
-import { demandStream, writeResponse, privateWrite, boundedFetch, singleFlight } from '../runtime-safety.mjs'
+import { demandStream, writeResponse, privateWrite, boundedFetch, boundedSignal, singleFlight } from '../runtime-safety.mjs'
 import { handleOAuthRateLimits } from '../oauth-rate-limits.mjs'
 const keep = async fn => { const timer=setInterval(()=>{},50);try{return await fn()}finally{clearInterval(timer)} }
 test('quota timeout covers blocked session; rejection safely observed',()=>keep(async()=>{
@@ -30,6 +30,26 @@ test('HTTP writer waits drain, and close cancels upstream reader',async()=>{
  const task=writeResponse(response,{status:200,headers:new Headers(),body}).catch(e=>{assert.equal(e.name,'AbortError')})
  await new Promise(r=>setTimeout(r,10));assert.equal(response.writes,1);response.destroyed=true;response.emit('close');await task;assert.equal(cancelled,true)
 })
+test('generation default is 180 seconds, explicit override and cancellation remain bounded',()=>keep(async()=>{
+ const previous=process.env.UPSTREAM_TIMEOUT_MS
+ const original=AbortSignal.timeout
+ const durations=[]
+ try {
+  delete process.env.UPSTREAM_TIMEOUT_MS
+  AbortSignal.timeout=ms=>{durations.push(ms);return new AbortController().signal}
+  boundedSignal()
+  process.env.UPSTREAM_TIMEOUT_MS='42000';boundedSignal()
+  assert.deepEqual(durations,[180000,42000])
+ } finally {
+  AbortSignal.timeout=original
+  if(previous===undefined)delete process.env.UPSTREAM_TIMEOUT_MS;else process.env.UPSTREAM_TIMEOUT_MS=previous
+ }
+ const signal=boundedSignal(undefined,20)
+ await new Promise(resolve=>signal.addEventListener('abort',resolve,{once:true}))
+ assert.equal(signal.reason.name,'TimeoutError')
+ const controller=new AbortController(),cancelled=boundedSignal(controller.signal)
+ controller.abort();assert.equal(cancelled.aborted,true)
+}))
 test('bounded fetch forwards abort to startup discovery and refresh',()=>keep(async()=>{
  const controller=new AbortController();let signal
  const fetch=boundedFetch(async(_,init)=>{signal=init.signal;return new Promise((_,reject)=>{init.signal.addEventListener('abort',()=>reject(init.signal.reason),{once:true})})})

@@ -4,6 +4,8 @@ import { mkdtemp, cp, readFile, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { request as httpRequest } from 'node:http'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { patchOpenAIOAuth } from '../patch-openai-oauth.mjs'
 import { safeChatSummary } from '../runtime-safety.mjs'
 const fixture = async fn => {
@@ -14,7 +16,7 @@ const fixture = async fn => {
  const source=await readFile(target,'utf8')
  await writeFile(join(root,'dist/session.mjs'),'export let calls=0; export const openaiCredentials=()=>({getSession:async()=>{calls++;return {accessToken:"synthetic",accountId:"synthetic"}}});')
  await writeFile(join(root,'dist/probe.js'),source.replace('from "@openai-oauth/local"','from "./session.mjs"'))
- await fn(await import('file://'+root+'/dist/probe.js'),await import('file://'+root+'/dist/session.mjs'))
+ await fn(await import('file://'+root+'/dist/probe.js'),await import('file://'+root+'/dist/session.mjs'),root)
  } finally {await rm(root,{recursive:true,force:true})}
 }
 const req=(path,body,signal)=>new Request('http://localhost/v1/'+path,{method:'POST',signal,body:JSON.stringify(body)})
@@ -110,7 +112,43 @@ test('exact previous v1 upgrade and v2 reapply validate before mutations',async(
  for(const [path,text]of previous.writes)await writeFile(path,text)
  await writeFile(file,previous.source)
  patchOpenAIOAuth(root);const upgraded=await readFile(file,'utf8');assert.match(upgraded,/oauth-server-safety-v2/);patchOpenAIOAuth(root);assert.equal(await readFile(file,'utf8'),upgraded)
+ await writeFile(file,upgraded.replace('  const result = streamText({\n    onError: () => {},','  const result = streamText({'))
+ patchOpenAIOAuth(root);assert.equal(await readFile(file,'utf8'),upgraded)
+ await writeFile(file,upgraded+'\n// server drift');assert.throws(()=>patchOpenAIOAuth(root));
+ assert.equal(await readFile(file,'utf8'),upgraded+'\n// server drift');await writeFile(file,upgraded)
  const dependency=join(root,'node_modules/@openai-oauth/core/dist/runtime.js');await writeFile(dependency,(await readFile(dependency,'utf8'))+'\n// drift')
  assert.throws(()=>patchOpenAIOAuth(root));assert.equal(await readFile(file,'utf8'),upgraded)
  }finally{await rm(root,{recursive:true,force:true})}
 })
+
+test('streaming Chat SDK errors never print private upstream bodies',()=>fixture(async(_,session,root)=>{
+ const script=`
+  import {createOpenAIOAuthFetchHandler} from ${JSON.stringify('file://'+root+'/dist/probe.js')};
+  const handler=createOpenAIOAuthFetchHandler({codexVersion:'0.144.1',fetch:async url=>url.includes('/models')?Response.json({models:[{slug:'synthetic'}]}):Response.json({error:{message:'synthetic rejection'},private_data:'PRIVATE_UPSTREAM_BODY_SENTINEL'},{status:400})});
+  const response=await handler(new Request('http://localhost/v1/chat/completions',{method:'POST',body:JSON.stringify({model:'synthetic',stream:true,messages:[{role:'user',content:'synthetic'}]})}));
+  try {await response.text()} catch {}
+  console.log('STREAM_TEST_COMPLETED');
+ `;
+ const {stdout,stderr}=await promisify(execFile)(process.execPath,['--input-type=module','-e',script],{timeout:10000});
+ assert.match(stdout,/STREAM_TEST_COMPLETED/);
+ assert.doesNotMatch(stdout+stderr,/PRIVATE_UPSTREAM_BODY_SENTINEL|responseBody|synthetic rejection/);
+}));
+test('HTTP upload deadline closes a stalled body before OAuth or inference',()=>fixture(async({startOpenAIOAuthServer},session)=>{
+ const previous=process.env.UPSTREAM_TIMEOUT_MS;
+ let instance,request,timer;
+ try {
+  process.env.UPSTREAM_TIMEOUT_MS='50';
+  instance=await startOpenAIOAuthServer({host:'127.0.0.1',port:0,models:['synthetic'],codexVersion:'0.144.1'});
+  const closed=new Promise(resolve=>{
+   request=httpRequest({host:'127.0.0.1',port:instance.port,path:'/v1/responses',method:'POST',headers:{'content-length':'1000'}},response=>response.resume());
+   request.on('error',()=>{});request.once('close',()=>resolve(true));request.write('{');
+  });
+  const released=await Promise.race([closed,new Promise(resolve=>timer=setTimeout(()=>resolve(false),500))]);
+  assert.equal(released,true,'a stalled request must release its connection at the deadline');
+  assert.equal(session.calls,0);
+  assert.equal((await fetch(`http://127.0.0.1:${instance.port}/health`)).status,200);
+ } finally {
+  clearTimeout(timer);request?.destroy();await instance?.close();
+  if(previous===undefined)delete process.env.UPSTREAM_TIMEOUT_MS;else process.env.UPSTREAM_TIMEOUT_MS=previous;
+ }
+}));
