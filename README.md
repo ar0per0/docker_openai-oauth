@@ -28,7 +28,7 @@ services:
       CRON_TEST_COUNT: 3 # Número total de respuestas OK consecutivas exigidas en cada ejecución.
       STARTUP_MODEL_TEST: true # Ejecuta las mismas pruebas al arrancar si auth.json ya existía.
       HEALTHCHECK_TIMEOUT_MS: 30000 # Tiempo máximo de cada petición de prueba, tanto cron como de inicio.
-      UPSTREAM_TIMEOUT_MS: ${UPSTREAM_TIMEOUT_MS:-180000} # Configurable en .env; milisegundos.
+      UPSTREAM_TIMEOUT_MS: 600000 # Configurable en .env; milisegundos.
     volumes:
       - openai-oauth-data:/data/codex
 
